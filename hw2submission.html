@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml"><head>
+    <title>Corporate Finance: Homework 2</title>
+  <meta name="KEYWORDS" content="..."><meta name="AUTHOR" content="Eleanor Chan"><meta http-equiv="Content-Type" content="text/html; charset=UTF-8"><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="stylesheet" href="hw.css"></head>
+
+  
+  
+
+  
+
+  
+  
+
+  
+  
+
+  <body>
+
+    <h1> Homework 2, by Eleanor Chan, Jan 26, 2017 </h1>
+
+    <h2> Executive Summary </h2>
+
+    <p> The event study is a useful method of determining the impact of an event's effects. In performing an event study on the effects of stock performance when it's paying dividends, we see that the effect is fairly neglible. With an average of <b>0.000092 </b> and a standard deviation of <b> 0.00056</b>, following dividend announcement days the excess returns exhibit a sharp dip before returning to its former level. </p>
+
+    <h2> Full Body Text </h2>
+
+    <p> Data is pulled from CRSP's DSF and DSEDIST, which are respectively the U.S. Daily Stock Performance and U.S. Stock Event Distribution tables. The particular event of interest is the ex-dividend date, after which a new buyer would not be entitled to the most recently announced dividend payout. We wish to observe how the excess stock returns change in a 20-day window centered on that event, so the date range is constricted to Dec 2011 to Jan 2013.</p>
+
+<p> These data are matched and merged on the basis of common PERMNO (asset type, tied to one firm) and dates. An added column of excess returns is calculated by subtracting the day's S&P500 value-weighted return from all stocks' returns. Potential sites of missing or invalid values (a return was not recorded because the stock did not trade that day, etc.) are culled beforehand in preparing the data. </p>
+
+<p> Since the objective is to average excess returns across all stocks per day in the 41-day time window, an empty matrix of 41 x (number of PERMNO) is preallocated. For every PERMNO analyzed:
+
+<ol> 
+	<li> The pertinent filtered subset is stored. </li>
+	<li> The locations of the ex-dividend dates are noted.</li>
+	<li> The excess returns of the above dates are captured.</li>
+	<li> References to ex-div dates whose 41-day window exceed the bounds of the data are removed. This preempts erroneous analyses of, for instance, liquidating dividends.</li>
+	<li> For the remaining dividend events, excess returns for each day are accessed, summed, and stored in the appropriate cells of the prepared matrix.</li>
+</ol>
+
+<p>At the end, a final check is run to see if any NA values that slipped through need to be culled. Each row (representing a day in the window) is averaged and the results are plotted.</p>
+
+<p>As seen in the figure below, excess returns dip more sharply than usual following an ex-dividend day. This is as expected, as ex-dividend days denote when a stock's prices are adjusted downwards by the amount of dividend that was declared prior.</p>
+
+    <h2> Figures </h2>
+
+<p>
+<center>
+
+</p>
+<p><img src="day0 is exdt.png"></p>
+<caption> Event study: Average 2012 stock response centered around ex-dividend day </caption></p></center>
+
+      
+
+    <h2> Computer Code </h2>
+
+    <pre>
+username <- "myname"
+password <- "myPW"
+sasPath <- "D:/SAS-JDBC-Drivers"
+
+library(rJava)
+options(java.parameters = '-Xmx4g')
+library(RJDBC)
+sasCore <- paste0(sasPath, "/sas.core.jar")
+sasDriver <- paste0(sasPath, "/sas.intrnet.javatools.jar")
+.jaddClassPath(c(sasCore, sasDriver))
+driver <- RJDBC::JDBC("com.sas.net.sharenet.ShareNetDriver", sasDriver, identifier.quote = "`")
+# wrds is the connection object
+wrds <- RJDBC::dbConnect(driver, "jdbc:sharenet://wrds-cloud.wharton.upenn.edu:8551/", username, password)
+
+library(xts)
+
+# CRSP Queries: 2012 Daily S&P500s and Dividend Events ####
+sql <-  "select caldt, vwretd from CRSP.DSP500 where caldt between '01dec2011'd and '31jan2013'd"
+res <- DBI::dbSendQuery(wrds, sql)
+dbHasCompleted(res) #check that this is true
+DSP <- DBI::fetch(res, n = -1)
+
+# Dividend Events
+sql <- "SELECT distcd, exdt, divamt, permno FROM CRSPA.DSEDIST where exdt between '01jan2012'd and '31dec2012'd"
+res <- DBI::dbSendQuery(wrds, sql)
+dbHasCompleted(res) #check that this is true
+DIV <- DBI::fetch(res, n = -1)
+
+sql <- "SELECT DATE, permno, ret FROM CRSPA.DSF where DATE between '01dec2011'd and '31jan2013'd"
+res <- DBI::dbSendQuery(wrds, sql)
+dbHasCompleted(res) #check that this is true
+stox <- DBI::fetch(res, n = -1)
+
+dbDisconnect(wrds)  # close connection
+
+# Data That Should Have Gone Through DPLYR ####
+names(stox)[1] <- 'EXDT'
+mrg1 <- merge(stox, DIV, by = c('PERMNO', 'EXDT'), all = T)
+  #line up  stox W/ DIV events
+
+colnames(DSP)[1] <- 'EXDT'
+mrg2 <- merge(mrg1, DSP, by = 'EXDT', all = T)
+mrg2$vwretd <- na.locf(mrg2$vwretd)
+mrg2 <- cbind(mrg2, XCESS = mrg2$RET - mrg2$vwretd)
+  #some dividend payout days are on non-trading days so I'm pulling S&P data forward
+
+invalidDIV <- which(mrg2$DISTCD > 0 & is.na(mrg2$RET) > 0)
+  #Dividends for which there are no returns will be removed.
+fmrg <- mrg2[-invalidDIV,]
+divcheck <- which(fmrg$DISTCD > 0)
+  #preparing to grab only IDs with dividend payouts
+IDs <- unique(fmrg$PERMNO[divcheck])
+IDs <- sort(IDs)
+            
+# Here we go.
+prep <- matrix(NA, 41, length(IDs))
+colnames(prep) <- IDs
+
+for(i in 1:length(IDs)){
+  holdID <- fmrg[fmrg$PERMNO == IDs[i],]
+  #filter by ID
+  
+  ind <- which(holdID$DISTCD > 0)
+  #get index of all dividend events in holdID
+  this <- holdID[ind,]$XCESS
+  #all returns during div events
+  up=ind+20
+  down=ind-20
+  
+  
+  #if div dates outside scope of data, delete index.
+  if(max(up) > nrow(holdID)){
+    ind <- ind[-which(up > nrow(holdID))]
+  }
+  if(min(down) < 0){
+    ind <- ind[-1]
+  }
+  
+  up=ind+20
+  down=ind-20
+  
+  #Now we start writing into PREP.
+  for(j in 1:20){
+    that <- holdID[up-j,]$XCESS
+    prep[42-j,i] <- sum(that)
+    
+    there <- holdID[down+j,]$XCESS
+    prep[j,i] <- sum(there)
+  }
+  
+  prep[21,i] <- sum(this) #sum all of day 0
+}
+
+# Line the Ducks ####
+help <- which(is.na(colSums(prep)))
+moretocut <- sum(is.na(colSums(prep)))
+culling <- prep[,-help]
+
+MOMOFTRUTH <- rowSums(culling)/(length(divcheck)-moretocut)
+sd(MOMOFTRUTH)
+Days <- seq(-20,20)
+plot(x = Days, MOMOFTRUTH, type='l', ylab = 'Excess Returns')
+abline(coef = c(0,0), lwd = 2, col='red')
+
+
+    </pre>
+
+    <h2> References </h2>
+
+    <ul>
+      <li> <a href="https://wrds-web.wharton.upenn.edu/wrds/support/Accessing%20and%20Manipulating%20the%20Data/_007R%20Programming/_001Using%20R%20with%20WRDS.cfm">Using R With WRDS</a>, WRDS, retrieved on Jan 27, 2017. </li>
+    </ul>
+
+<p class="notice">As a bonus, I had bothered to analyze if day 0 were the payment date of the dividend. In short, not much perturbance and it was business-as-usual. The figure is reproduced below.<br><br>
+
+<p><img src="day0 is paydt.png"></p>
+<caption> Event study: Average 2012 stock response centered around dividend payout day </caption></p
+
+
+</p>
+  
+
+
+</body></html>
