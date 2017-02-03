@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml"><head>
+    <title>Corporate Finance: Homework 3</title>
+  <meta name="KEYWORDS" content="..."><meta name="AUTHOR" content="Eleanor Chan"><meta http-equiv="Content-Type" content="text/html; charset=UTF-8"><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="stylesheet" href="hw.css"></head>
+ 
+
+  <body>
+
+    <h1> Homework 3, by Eleanor Chan, Feb 2, 2017 </h1>
+
+    <h2> Executive Summary </h2>
+
+    <p> We are interested in creating an annual data set of compounded rates of return for all U.S. stocks. With the stock data, we can prepare the data and group by company in order to compound the rates of return for each, yielding the desired sataset.</p>
+
+    <h2> Full Body Text </h2>
+
+    <p> The monthly data for all U.S. stocks on CRSP is contained in MSF. Grabbing monthly information will be less of a burden when compounding to annual returns. Stocks are identified by their CUSIP and PERMCO numbers. To calculate the market capitalization, we'll need the shares outstanding and the share price. Each stock's monthly return and date are also acquired. The MSF does not have the ticker, though, so we will need to acquire that and the matching CUSIP and PERMCO from the separately-stored header file, DSFHDR.</p>
+
+<p> Once acquired, the ticker data is merged with the loaded MSF. Observations for which shares outstanding are not known are omitted. Price * Shares Outstanding = Market Capitalization. This product is wrapped by an absolute value operator because some prices were replaced by bid/ask averages and marked as negative if there was no official closing price from that day.</p>
+
+<p> The entire DATE column is truncated to only the year to allow aggregate() to collapse the values into yearly observations. The annualization function is defined in-code, then applied to all return observations, grouped by CUSIP, PERMCO, TICKER (if available), and year. The market capitalization is averaged separately, then the calculations are rejoined in the end to form the new database. </p>
+
+    <h2> Figures </h2>
+
+<p>
+<center>
+
+</p>
+<p><img src=""></p>
+<caption> </caption></p></center>
+
+      
+
+    <h2> Computer Code </h2>
+
+    <pre>
+username <- "myname"
+password <- "myPW"
+sasPath <- "D:/SAS-JDBC-Drivers"
+
+library(rJava)
+options(java.parameters = '-Xmx4g')
+library(RJDBC)
+sasCore <- paste0(sasPath, "/sas.core.jar")
+sasDriver <- paste0(sasPath, "/sas.intrnet.javatools.jar")
+.jaddClassPath(c(sasCore, sasDriver))
+driver <- RJDBC::JDBC("com.sas.net.sharenet.ShareNetDriver", sasDriver, identifier.quote = "`")
+# wrds is the connection object
+wrds <- RJDBC::dbConnect(driver, "jdbc:sharenet://wrds-cloud.wharton.upenn.edu:8551/", username, password)
+
+rm(list=ls()) #clear all
+
+rm(list=ls()) #clear all
+save.image("CRSPresults.RData")
+
+source("D:/Dropbox/Academics/MFE/Corp Fin/HW/wrdscon.R")
+setwd("D:/Dropbox/Academics/MFE/Corp Fin/HW/HW3")
+
+# CRSP Queries: All Stocks  ####
+sql <- "select HCUSIP, PERMCO, HTICK from CRSPA.DSFHDR"
+res <- DBI::dbSendQuery(wrds, sql)
+dbHasCompleted(res) #check that this is true
+MSFnames <- DBI::fetch(res, n = -1)
+
+sql <- "select CUSIP, PERMCO, DATE, RET, SHROUT, PRC from CRSPA.MSF"
+res <- DBI::dbSendQuery(wrds, sql)
+dbHasCompleted(res) #check that this is true
+MSF <- DBI::fetch(res, n = -1)
+
+dbDisconnect(wrds)  # close connection
+
+#Clean data ####
+names(MSFnames)[1] <- 'CUSIP'
+
+library(dplyr)
+# merge by CUSIP AND PERMCO
+# drop NA values in SHROUT
+combine <- MSFnames %>% left_join(MSF) %>% filter(!is.na(SHROUT))
+
+#Derive marketcap and operate ####
+# Prices are negative if there wasn't a price per se, but a bid/ask spread instead. Just take abs().
+combine <- mutate(combine, marketcap = abs(PRC*SHROUT)) #keep in mind SHROUT is in hundreds
+
+annualize <- function(x) prod(1+x, na.rm=T) - 1
+
+#grouping operation by PERMCO, CUSIP ####
+#holding period compounded annual rate of return
+
+library(lubridate)
+combine$DATE <- year(as.Date(combine$DATE))
+
+# By CUSIP/PERMCO/year, annualize, and avg market cap.
+lghrOP <- aggregate(formula = RET ~ CUSIP + PERMCO + HTICK + DATE, data=combine, FUN =  annualize)
+AVGMKT <- aggregate(formula = marketcap ~ CUSIP + PERMCO + HTICK + DATE, data=combine, FUN =  mean)
+
+lghrOP <- lghrOP %>% left_join(AVGMKT)
+write.csv(lghrOP, 'final.csv')
+    </pre>
+
+    <h2> References </h2>
+
+    <ul>
+      <li> <a href="https://wrds-web.wharton.upenn.edu/wrds/support/Accessing%20and%20Manipulating%20the%20Data/_007R%20Programming/_001Using%20R%20with%20WRDS.cfm">Using R With WRDS</a>, WRDS, retrieved on Jan 27, 2017. </li>
+<li>Calculated (or Derived) based on data from MSF (c)2016 Center for Research in Security Prices (CRSP), The University of Chicago Booth School of Business.` </li>
+    </ul>
+
+  
+
+
+</body></html>
